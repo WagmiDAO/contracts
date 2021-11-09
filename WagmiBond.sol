@@ -496,7 +496,7 @@ contract WagmiBond is Ownable {
         principalPerWagmi = _principalPerWagmi;
     }
     
-    function addWagmiToPay(uint256 amount) external onlyOwner {
+    function addWagmiToPay(uint256 amount) external {
         IERC20(wagmi).safeTransferFrom(msg.sender, address(this), amount);
         wagmiAvailableToPay += amount;
         
