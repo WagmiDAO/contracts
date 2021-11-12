@@ -545,7 +545,7 @@ contract ERC20 is Context, IERC20, IERC20Metadata {
  * 
  * The renounceMintership removed to prevent accidents
  */
-abstract contract Mintable is Context {
+abstract contract Mintable is Context, Ownable {
     address private _minter;
 
     event MintershipTransferred(address indexed previousMinter, address indexed newMinter);
@@ -574,9 +574,9 @@ abstract contract Mintable is Context {
 
     /**
      * @dev Transfers mintership of the contract to a new account (`newMinter`).
-     * Can only be called by the current minter.
+     * Can only be called by the current owner.
      */
-    function transferMintership(address newMinter) public virtual onlyMinter {
+    function transferMintership(address newMinter) public virtual onlyOwner {
         require(newMinter != address(0), "Mintable: new minter is the zero address");
         _transferMintership(newMinter);
     }
