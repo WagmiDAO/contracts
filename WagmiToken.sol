@@ -592,7 +592,7 @@ abstract contract Mintable is Context, Ownable {
     }
 }
 
-contract WagmiToken is ERC20("WAGMI", "WAGMI"), Ownable, Mintable {
+contract WagmiToken is ERC20("WAGMI", "GMI"), Ownable, Mintable {
     constructor(uint256 initialAmount) {
         _mint(msg.sender, initialAmount);
     }
