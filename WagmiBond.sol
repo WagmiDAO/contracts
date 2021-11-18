@@ -454,7 +454,7 @@ contract WagmiBond is Ownable {
     uint256 public wagmiAvailableToPay;
     uint256 public vestingBlocks;
     uint256 public wagmiPerPrincipal;
-    uint256 public principalPerWagmi;
+    uint256 public ratioPrecision;
     
     struct UserInfo {
         uint256 remainingPayout;
@@ -466,6 +466,7 @@ contract WagmiBond is Ownable {
     event WagmiAdded(uint256 amount);
     event Deposit(address indexed user, uint256 amount, uint256 payout);
     event Claim(address indexed user, uint256 payout, bool staked);
+    event RatioChanged(uint256 oldWagmiPerPrincipal, uint256 newWagmiPerPrincipal, uint256 oldRatioPrecision, uint256 newRatioPrecision);
     
     constructor ( 
         address _wagmi,
@@ -474,7 +475,7 @@ contract WagmiBond is Ownable {
         address _staking,
         uint256 _vestingBlocks, 
         uint256 _wagmiPerPrincipal,
-        uint256 _principalPerWagmi
+        uint256 _ratioPrecision
     ) {
         require(_wagmi != address(0) && _principal != address(0) && _treasury != address(0) && _staking != address(0), 'zero address');
         wagmi = _wagmi;
@@ -483,17 +484,18 @@ contract WagmiBond is Ownable {
         staking = _staking;
         require(_vestingBlocks > 0, 'zero vesting');
         vestingBlocks = _vestingBlocks;
-        require(_wagmiPerPrincipal == 0 || _principalPerWagmi == 0, 'one ratio must be zero');
-        require(_wagmiPerPrincipal != 0 || _principalPerWagmi != 0, 'both ratios cant be zero');
+        require(_wagmiPerPrincipal != 0, 'ratio cant be zero');
         wagmiPerPrincipal = _wagmiPerPrincipal;
-        principalPerWagmi = _principalPerWagmi;
+        require(_ratioPrecision != 0, 'precision cant be zero');
+        ratioPrecision = _ratioPrecision;
     }
     
-    function setRatios(uint256 _wagmiPerPrincipal, uint256 _principalPerWagmi) external onlyOwner {
-        require(_wagmiPerPrincipal == 0 || _principalPerWagmi == 0, 'one ratio must be zero');
-        require(_wagmiPerPrincipal != 0 || _principalPerWagmi != 0, 'both ratios cant be zero');
+    function setRatio(uint256 _wagmiPerPrincipal, uint256 _ratioPrecision) external onlyOwner {
+        emit RatioChanged(wagmiPerPrincipal, _wagmiPerPrincipal, ratioPrecision, _ratioPrecision);
+        require(_wagmiPerPrincipal != 0, 'ratio cant be zero');
         wagmiPerPrincipal = _wagmiPerPrincipal;
-        principalPerWagmi = _principalPerWagmi;
+        require(_ratioPrecision != 0, 'precision cant be zero');
+        ratioPrecision = _ratioPrecision;
     }
     
     function addWagmiToPay(uint256 amount) external {
@@ -506,9 +508,7 @@ contract WagmiBond is Ownable {
     function deposit(uint256 amount) external returns (uint256) {
         uint256 payout;
         if(wagmiPerPrincipal != 0)
-            payout = amount * wagmiPerPrincipal;
-        else
-            payout = amount / principalPerWagmi;
+            payout = amount * wagmiPerPrincipal / ratioPrecision;
             
         require(payout > 0, "too small");
         require(wagmiAvailableToPay >= payout, "sell out");
