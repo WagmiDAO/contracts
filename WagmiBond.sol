@@ -459,7 +459,7 @@ contract WagmiBond is Ownable {
     struct UserInfo {
         uint256 remainingPayout;
         uint256 remainingVestingBlocks;
-        uint256 lastIteractionBlock;
+        uint256 lastInteractionBlock;
     }
     mapping(address => UserInfo) public userInfo;
 
@@ -518,7 +518,7 @@ contract WagmiBond is Ownable {
         userInfo[msg.sender] = UserInfo({
             remainingPayout: userInfo[msg.sender].remainingPayout + payout,
             remainingVestingBlocks: vestingBlocks,
-            lastIteractionBlock: block.number
+            lastInteractionBlock: block.number
         });
 
         emit Deposit(msg.sender, amount, payout);
@@ -527,27 +527,27 @@ contract WagmiBond is Ownable {
     
     function claimablePayout(address user) external view returns (uint256) {
         UserInfo memory info = userInfo[user];
-        uint256 blocksSinceLastIteraction = block.number - info.lastIteractionBlock;
+        uint256 blocksSinceLastInteraction = block.number - info.lastInteractionBlock;
         
-        if(blocksSinceLastIteraction > info.remainingVestingBlocks)
+        if(blocksSinceLastInteraction > info.remainingVestingBlocks)
             return info.remainingPayout;
-        return info.remainingPayout * blocksSinceLastIteraction / info.remainingVestingBlocks;
+        return info.remainingPayout * blocksSinceLastInteraction / info.remainingVestingBlocks;
     }
     
     function claim(bool autoStake) external returns (uint256) {        
         UserInfo memory info = userInfo[msg.sender];
-        uint256 blocksSinceLastIteraction = block.number - info.lastIteractionBlock;
+        uint256 blocksSinceLastInteraction = block.number - info.lastInteractionBlock;
         uint256 payout;
         
-        if(blocksSinceLastIteraction > info.remainingVestingBlocks) {
+        if(blocksSinceLastInteraction >= info.remainingVestingBlocks) {
             payout = info.remainingPayout;
             delete userInfo[msg.sender];
         } else {
-            payout = info.remainingPayout * blocksSinceLastIteraction / info.remainingVestingBlocks;
+            payout = info.remainingPayout * blocksSinceLastInteraction / info.remainingVestingBlocks;
             userInfo[msg.sender] = UserInfo({
                 remainingPayout: info.remainingPayout - payout,
-                remainingVestingBlocks: info.remainingVestingBlocks - blocksSinceLastIteraction,
-                lastIteractionBlock: block.number
+                remainingVestingBlocks: info.remainingVestingBlocks - blocksSinceLastInteraction,
+                lastInteractionBlock: block.number
             });
         }
         
