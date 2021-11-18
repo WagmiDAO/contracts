@@ -503,9 +503,7 @@ contract WagmiBond is Ownable {
         emit WagmiAdded(amount);
     }
     
-    function deposit(uint256 amount, address user) external returns (uint256) {
-        require(user != address(0), "zero address");
-        
+    function deposit(uint256 amount) external returns (uint256) {
         uint256 payout;
         if(wagmiPerPrincipal != 0)
             payout = amount * wagmiPerPrincipal;
@@ -517,13 +515,13 @@ contract WagmiBond is Ownable {
 
         IERC20(principal).safeTransferFrom(msg.sender, treasury, amount);
         wagmiAvailableToPay -= payout;
-        userInfo[user] = UserInfo({
-            remainingPayout: userInfo[user].remainingPayout + payout,
+        userInfo[msg.sender] = UserInfo({
+            remainingPayout: userInfo[msg.sender].remainingPayout + payout,
             remainingVestingBlocks: vestingBlocks,
             lastIteractionBlock: block.number
         });
 
-        emit Deposit(user, amount, payout);
+        emit Deposit(msg.sender, amount, payout);
         return payout; 
     }
     
@@ -536,17 +534,17 @@ contract WagmiBond is Ownable {
         return info.remainingPayout * blocksSinceLastIteraction / info.remainingVestingBlocks;
     }
     
-    function claim(address user, bool autoStake) external returns (uint256) {        
-        UserInfo memory info = userInfo[user];
+    function claim(bool autoStake) external returns (uint256) {        
+        UserInfo memory info = userInfo[msg.sender];
         uint256 blocksSinceLastIteraction = block.number - info.lastIteractionBlock;
         uint256 payout;
         
         if(blocksSinceLastIteraction > info.remainingVestingBlocks) {
             payout = info.remainingPayout;
-            delete userInfo[user];
+            delete userInfo[msg.sender];
         } else {
             payout = info.remainingPayout * blocksSinceLastIteraction / info.remainingVestingBlocks;
-            userInfo[user] = UserInfo({
+            userInfo[msg.sender] = UserInfo({
                 remainingPayout: info.remainingPayout - payout,
                 remainingVestingBlocks: info.remainingVestingBlocks - blocksSinceLastIteraction,
                 lastIteractionBlock: block.number
@@ -555,12 +553,12 @@ contract WagmiBond is Ownable {
         
         if(autoStake) {
             IERC20(wagmi).safeApprove(staking, payout);
-            IAutoStake(staking).deposit(user, payout);
+            IAutoStake(staking).deposit(msg.sender, payout);
         } else {
-            IERC20(wagmi).safeTransfer(user, payout);
+            IERC20(wagmi).safeTransfer(msg.sender, payout);
         }
         
-        emit Claim(user, payout, autoStake);
+        emit Claim(msg.sender, payout, autoStake);
         return payout;
     }
 }
