@@ -33,6 +33,8 @@ abstract contract Context {
  * This module is used through inheritance. It will make available the modifier
  * `onlyOwner`, which can be applied to your functions to restrict their use to
  * the owner.
+ * 
+ * The renounceOwnership removed to prevent accidents
  */
 abstract contract Ownable is Context {
     address private _owner;
@@ -59,17 +61,6 @@ abstract contract Ownable is Context {
     modifier onlyOwner() {
         require(owner() == _msgSender(), "Ownable: caller is not the owner");
         _;
-    }
-
-    /**
-     * @dev Leaves the contract without owner. It will not be possible to call
-     * `onlyOwner` functions anymore. Can only be called by the current owner.
-     *
-     * NOTE: Renouncing ownership will leave the contract without an owner,
-     * thereby removing any functionality that is only available to the owner.
-     */
-    function renounceOwnership() public virtual onlyOwner {
-        _setOwner(address(0));
     }
 
     /**
