@@ -593,8 +593,8 @@ abstract contract Mintable is Context, Ownable {
 }
 
 contract WagmiToken is ERC20("WAGMI", "GMI"), Ownable, Mintable {
-    constructor(uint256 initialAmount) {
-        _mint(msg.sender, initialAmount);
+    constructor() {
+        _mint(msg.sender, 20000000 ether);
     }
     
     function mint(address _to, uint256 _amount) external onlyMinter {
