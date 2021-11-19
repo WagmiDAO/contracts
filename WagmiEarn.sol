@@ -33,6 +33,8 @@ abstract contract Context {
  * This module is used through inheritance. It will make available the modifier
  * `onlyOwner`, which can be applied to your functions to restrict their use to
  * the owner.
+ * 
+ * The renounceOwnership removed to prevent accidents
  */
 abstract contract Ownable is Context {
     address private _owner;
@@ -59,17 +61,6 @@ abstract contract Ownable is Context {
     modifier onlyOwner() {
         require(owner() == _msgSender(), "Ownable: caller is not the owner");
         _;
-    }
-
-    /**
-     * @dev Leaves the contract without owner. It will not be possible to call
-     * `onlyOwner` functions anymore. Can only be called by the current owner.
-     *
-     * NOTE: Renouncing ownership will leave the contract without an owner,
-     * thereby removing any functionality that is only available to the owner.
-     */
-    function renounceOwnership() public virtual onlyOwner {
-        _setOwner(address(0));
     }
 
     /**
@@ -465,11 +456,70 @@ library SafeERC20 {
     }
 }
 
+/**
+ * @dev Contract module that helps prevent reentrant calls to a function.
+ *
+ * Inheriting from `ReentrancyGuard` will make the {nonReentrant} modifier
+ * available, which can be applied to functions to make sure there are no nested
+ * (reentrant) calls to them.
+ *
+ * Note that because there is a single `nonReentrant` guard, functions marked as
+ * `nonReentrant` may not call one another. This can be worked around by making
+ * those functions `private`, and then adding `external` `nonReentrant` entry
+ * points to them.
+ *
+ * TIP: If you would like to learn more about reentrancy and alternative ways
+ * to protect against it, check out our blog post
+ * https://blog.openzeppelin.com/reentrancy-after-istanbul/[Reentrancy After Istanbul].
+ */
+abstract contract ReentrancyGuard {
+    // Booleans are more expensive than uint256 or any type that takes up a full
+    // word because each write operation emits an extra SLOAD to first read the
+    // slot's contents, replace the bits taken up by the boolean, and then write
+    // back. This is the compiler's defense against contract upgrades and
+    // pointer aliasing, and it cannot be disabled.
+
+    // The values being non-zero value makes deployment a bit more expensive,
+    // but in exchange the refund on every call to nonReentrant will be lower in
+    // amount. Since refunds are capped to a percentage of the total
+    // transaction's gas, it is best to keep them low in cases like this one, to
+    // increase the likelihood of the full refund coming into effect.
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+
+    uint256 private _status;
+
+    constructor() {
+        _status = _NOT_ENTERED;
+    }
+
+    /**
+     * @dev Prevents a contract from calling itself, directly or indirectly.
+     * Calling a `nonReentrant` function from another `nonReentrant`
+     * function is not supported. It is possible to prevent this from happening
+     * by making the `nonReentrant` function external, and make it call a
+     * `private` function that does the actual work.
+     */
+    modifier nonReentrant() {
+        // On the first call to nonReentrant, _notEntered will be true
+        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
+
+        // Any calls to nonReentrant after this point will fail
+        _status = _ENTERED;
+
+        _;
+
+        // By storing the original value once again, a refund is triggered (see
+        // https://eips.ethereum.org/EIPS/eip-2200)
+        _status = _NOT_ENTERED;
+    }
+}
+
 interface IWagmiToken is IERC20 {
     function mint(address account, uint256 amount) external;
 }
 
-contract WagmiEarn is Ownable {
+contract WagmiEarn is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     struct UserInfo {
@@ -483,20 +533,25 @@ contract WagmiEarn is Ownable {
         uint256 allocPoint;
         uint256 lastRewardBlock;
         uint256 accWagmiPerShare;
+        uint256 lpSupply;
     }
 
-    IWagmiToken public wagmi;
+    IWagmiToken public immutable wagmi;
     uint256 public wagmiPerBlock;
+    uint256 public constant MAX_EMISSION_RATE = 100 ether;
 
     PoolInfo[] public poolInfo;
     mapping(uint256 => mapping(address => UserInfo)) public userInfo;
     uint256 public totalAllocPoint = 0;
-    uint256 public startBlock;
+    uint256 public immutable startBlock;
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event Claim(address indexed user, uint256 indexed pid, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
+    event Add(uint256 allocPoint, IERC20 lpToken);
+    event Set(uint256 pid, uint256 oldAllocPoint, uint256 newAllocPoint);
+    event SetWagmiPerBlock(uint256 oldWagmiPerBlock, uint256 newWagmiPerBlock);
 
     constructor(
         IWagmiToken _wagmi,
@@ -516,10 +571,8 @@ contract WagmiEarn is Ownable {
             return _to - _from;
     }
 
-    function add(uint256 _allocPoint, IERC20 _lpToken, bool _withUpdate) public onlyOwner {
-        if (_withUpdate) {
-            massUpdatePools();
-        }
+    function add(uint256 _allocPoint, IERC20 _lpToken) external onlyOwner {
+        massUpdatePools();
         uint256 lastRewardBlock = block.number > startBlock
             ? block.number
             : startBlock;
@@ -529,15 +582,16 @@ contract WagmiEarn is Ownable {
                 lpToken: _lpToken,
                 allocPoint: _allocPoint,
                 lastRewardBlock: lastRewardBlock,
-                accWagmiPerShare: 0
+                accWagmiPerShare: 0,
+                lpSupply: 0
             })
         );
+        emit Add(_allocPoint, _lpToken);
     }
 
-    function set(uint256 _pid, uint256 _allocPoint, bool _withUpdate) public onlyOwner {
-        if (_withUpdate) {
-            massUpdatePools();
-        }
+    function set(uint256 _pid, uint256 _allocPoint) external onlyOwner {
+        emit Set(_pid, poolInfo[_pid].allocPoint, _allocPoint);
+        massUpdatePools();
         totalAllocPoint = totalAllocPoint - poolInfo[_pid].allocPoint + _allocPoint;
         poolInfo[_pid].allocPoint = _allocPoint;
     }
@@ -546,13 +600,12 @@ contract WagmiEarn is Ownable {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][_user];
         uint256 accWagmiPerShare = pool.accWagmiPerShare;
-        uint256 lpSupply = pool.lpToken.balanceOf(address(this));
-        if (block.number > pool.lastRewardBlock && lpSupply != 0) {
+        if (block.number > pool.lastRewardBlock && pool.lpSupply != 0 && totalAllocPoint > 0) {
             uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
             uint256 wagmiReward = multiplier * wagmiPerBlock * pool.allocPoint / totalAllocPoint;
-            accWagmiPerShare = accWagmiPerShare + (wagmiReward * 1e12 / lpSupply);
+            accWagmiPerShare = accWagmiPerShare + (wagmiReward * 1e18 / pool.lpSupply);
         }
-        return (user.amount * accWagmiPerShare / 1e12) - user.rewardDebt + user.pendingRewards;
+        return (user.amount * accWagmiPerShare / 1e18) - user.rewardDebt + user.pendingRewards;
     }
 
     function massUpdatePools() public {
@@ -567,88 +620,89 @@ contract WagmiEarn is Ownable {
         if (block.number <= pool.lastRewardBlock) {
             return;
         }
-        uint256 lpSupply = pool.lpToken.balanceOf(address(this));
-        if (lpSupply == 0) {
+        if (pool.lpSupply == 0) {
             pool.lastRewardBlock = block.number;
             return;
         }
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
         uint256 wagmiReward = multiplier * wagmiPerBlock * pool.allocPoint / totalAllocPoint;
         wagmi.mint(address(this), wagmiReward);
-        pool.accWagmiPerShare = pool.accWagmiPerShare + (wagmiReward * 1e12 / lpSupply);
+        pool.accWagmiPerShare = pool.accWagmiPerShare + (wagmiReward * 1e18 / pool.lpSupply);
         pool.lastRewardBlock = block.number;
     }
 
-    function deposit(uint256 _pid, uint256 _amount, bool _withdrawRewards) public {
+    function deposit(uint256 _pid, uint256 _amount, bool _withdrawRewards) external nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         updatePool(_pid);
         if (user.amount > 0) {
-            uint256 pending = (user.amount * pool.accWagmiPerShare / 1e12) - user.rewardDebt;
-
-            if (pending > 0) {
-                user.pendingRewards = user.pendingRewards + pending;
-
-                if (_withdrawRewards) {
-                    safeWagmiTransfer(msg.sender, user.pendingRewards);
-                    emit Claim(msg.sender, _pid, user.pendingRewards);
-                    user.pendingRewards = 0;
-                }
+            uint256 pending = (user.amount * pool.accWagmiPerShare / 1e18) - user.rewardDebt;
+            uint256 totalPending = user.pendingRewards + pending;
+            if (_withdrawRewards) {
+                user.pendingRewards = 0;
+                safeWagmiTransfer(msg.sender, totalPending);
+                emit Claim(msg.sender, _pid, totalPending);
+            } else {
+                user.pendingRewards = totalPending;
             }
         }
         if (_amount > 0) {
-            pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
+            uint256 balanceBefore = pool.lpToken.balanceOf(address(this));
+            pool.lpToken.safeTransferFrom(msg.sender, address(this), _amount);
+            _amount = pool.lpToken.balanceOf(address(this)) - balanceBefore;
             user.amount = user.amount + _amount;
+            pool.lpSupply = pool.lpSupply + _amount;
         }
-        user.rewardDebt = user.amount * pool.accWagmiPerShare / 1e12;
+        user.rewardDebt = user.amount * pool.accWagmiPerShare / 1e18;
         emit Deposit(msg.sender, _pid, _amount);
     }
 
-    function withdraw(uint256 _pid, uint256 _amount, bool _withdrawRewards) public {
+    function withdraw(uint256 _pid, uint256 _amount, bool _withdrawRewards) external nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         require(user.amount >= _amount, "withdraw: not good");
         updatePool(_pid);
-        uint256 pending = (user.amount * pool.accWagmiPerShare / 1e12) - user.rewardDebt;
-        if (pending > 0) {
-            user.pendingRewards = user.pendingRewards + pending;
-
-            if (_withdrawRewards) {
-                safeWagmiTransfer(msg.sender, user.pendingRewards);
-                emit Claim(msg.sender, _pid, user.pendingRewards);
-                user.pendingRewards = 0;
-            }
+        uint256 pending = (user.amount * pool.accWagmiPerShare / 1e18) - user.rewardDebt;
+        uint256 totalPending = user.pendingRewards + pending;
+        if (_withdrawRewards) {
+            user.pendingRewards = 0;
+            safeWagmiTransfer(msg.sender, totalPending);
+            emit Claim(msg.sender, _pid, totalPending);
+        } else {
+            user.pendingRewards = totalPending;
         }
         if (_amount > 0) {
             user.amount = user.amount - _amount;
-            pool.lpToken.safeTransfer(address(msg.sender), _amount);
+            pool.lpSupply = pool.lpSupply - _amount;
+            pool.lpToken.safeTransfer(msg.sender, _amount);
         }
-        user.rewardDebt = user.amount * pool.accWagmiPerShare / 1e12;
+        user.rewardDebt = user.amount * pool.accWagmiPerShare / 1e18;
         emit Withdraw(msg.sender, _pid, _amount);
     }
 
-    function emergencyWithdraw(uint256 _pid) public {
+    function emergencyWithdraw(uint256 _pid) external nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
-        pool.lpToken.safeTransfer(address(msg.sender), user.amount);
+        pool.lpToken.safeTransfer(msg.sender, user.amount);
+        pool.lpSupply = pool.lpSupply - user.amount;
         emit EmergencyWithdraw(msg.sender, _pid, user.amount);
         user.amount = 0;
         user.rewardDebt = 0;
         user.pendingRewards = 0;
     }
 
-    function claim(uint256 _pid) public {
+    function claim(uint256 _pid) external nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         updatePool(_pid);
-        uint256 pending = (user.amount * pool.accWagmiPerShare / 1e12) - user.rewardDebt;
+        uint256 pending = (user.amount * pool.accWagmiPerShare / 1e18) - user.rewardDebt;
         if (pending > 0 || user.pendingRewards > 0) {
             user.pendingRewards = user.pendingRewards + pending;
             safeWagmiTransfer(msg.sender, user.pendingRewards);
             emit Claim(msg.sender, _pid, user.pendingRewards);
             user.pendingRewards = 0;
         }
-        user.rewardDebt = user.amount * pool.accWagmiPerShare / 1e12;
+        user.rewardDebt = user.amount * pool.accWagmiPerShare / 1e18;
     }
 
     function safeWagmiTransfer(address _to, uint256 _amount) internal {
@@ -660,8 +714,11 @@ contract WagmiEarn is Ownable {
         }
     }
 
-    function setWagmiPerBlock(uint256 _wagmiPerBlock) public onlyOwner {
+    function setWagmiPerBlock(uint256 _wagmiPerBlock) external onlyOwner {
         require(_wagmiPerBlock > 0, "!wagmiPerBlock-0");
+        require(_wagmiPerBlock <= MAX_EMISSION_RATE, "!wagmiPerBlock-MAX");
+        massUpdatePools();
+        emit SetWagmiPerBlock(wagmiPerBlock, _wagmiPerBlock);
         wagmiPerBlock = _wagmiPerBlock;
     }
 }
