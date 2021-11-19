@@ -33,6 +33,8 @@ abstract contract Context {
  * This module is used through inheritance. It will make available the modifier
  * `onlyOwner`, which can be applied to your functions to restrict their use to
  * the owner.
+ * 
+ * The renounceOwnership removed to prevent accidents
  */
 abstract contract Ownable is Context {
     address private _owner;
@@ -59,17 +61,6 @@ abstract contract Ownable is Context {
     modifier onlyOwner() {
         require(owner() == _msgSender(), "Ownable: caller is not the owner");
         _;
-    }
-
-    /**
-     * @dev Leaves the contract without owner. It will not be possible to call
-     * `onlyOwner` functions anymore. Can only be called by the current owner.
-     *
-     * NOTE: Renouncing ownership will leave the contract without an owner,
-     * thereby removing any functionality that is only available to the owner.
-     */
-    function renounceOwnership() public virtual onlyOwner {
-        _setOwner(address(0));
     }
 
     /**
@@ -550,10 +541,71 @@ abstract contract Pausable is Context {
     }
 }
 
+/**
+ * @dev Contract module that helps prevent reentrant calls to a function.
+ *
+ * Inheriting from `ReentrancyGuard` will make the {nonReentrant} modifier
+ * available, which can be applied to functions to make sure there are no nested
+ * (reentrant) calls to them.
+ *
+ * Note that because there is a single `nonReentrant` guard, functions marked as
+ * `nonReentrant` may not call one another. This can be worked around by making
+ * those functions `private`, and then adding `external` `nonReentrant` entry
+ * points to them.
+ *
+ * TIP: If you would like to learn more about reentrancy and alternative ways
+ * to protect against it, check out our blog post
+ * https://blog.openzeppelin.com/reentrancy-after-istanbul/[Reentrancy After Istanbul].
+ */
+abstract contract ReentrancyGuard {
+    // Booleans are more expensive than uint256 or any type that takes up a full
+    // word because each write operation emits an extra SLOAD to first read the
+    // slot's contents, replace the bits taken up by the boolean, and then write
+    // back. This is the compiler's defense against contract upgrades and
+    // pointer aliasing, and it cannot be disabled.
+
+    // The values being non-zero value makes deployment a bit more expensive,
+    // but in exchange the refund on every call to nonReentrant will be lower in
+    // amount. Since refunds are capped to a percentage of the total
+    // transaction's gas, it is best to keep them low in cases like this one, to
+    // increase the likelihood of the full refund coming into effect.
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+
+    uint256 private _status;
+
+    constructor() {
+        _status = _NOT_ENTERED;
+    }
+
+    /**
+     * @dev Prevents a contract from calling itself, directly or indirectly.
+     * Calling a `nonReentrant` function from another `nonReentrant`
+     * function is not supported. It is possible to prevent this from happening
+     * by making the `nonReentrant` function external, and make it call a
+     * `private` function that does the actual work.
+     */
+    modifier nonReentrant() {
+        // On the first call to nonReentrant, _notEntered will be true
+        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
+
+        // Any calls to nonReentrant after this point will fail
+        _status = _ENTERED;
+
+        _;
+
+        // By storing the original value once again, a refund is triggered (see
+        // https://eips.ethereum.org/EIPS/eip-2200)
+        _status = _NOT_ENTERED;
+    }
+}
+
 interface IWagmiEarn {
     function deposit(uint256 _pid, uint256 _amount, bool _withdrawRewards) external;
 
     function withdraw(uint256 _pid, uint256 _amount, bool _withdrawRewards) external;
+    
+    function claim(uint256 _pid) external;
 
     function pendingWagmi(uint256 _pid, address _user) external view returns (uint256);
 
@@ -562,7 +614,7 @@ interface IWagmiEarn {
     function emergencyWithdraw(uint256 _pid) external;
 }
 
-contract WagmiAutoStake is Ownable, Pausable {
+contract WagmiAutoStake is Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     struct UserInfo {
@@ -577,6 +629,7 @@ contract WagmiAutoStake is Ownable, Pausable {
     uint256 public immutable stakingPid;
 
     mapping(address => UserInfo) public userInfo;
+    mapping(address => bool) public whitelistedProxies;
 
     uint256 public totalShares;
     uint256 public lastHarvestedTime;
@@ -591,12 +644,20 @@ contract WagmiAutoStake is Ownable, Pausable {
     uint256 public callFee = 25;
     uint256 public withdrawFee = 10;
     uint256 public withdrawFeePeriod = 72 hours;
+    
+    bool public hadEmergencyWithdrawn = false;
 
     event Deposit(address indexed sender, uint256 amount, uint256 shares, uint256 lastDepositedTime);
     event Withdraw(address indexed sender, uint256 amount, uint256 shares);
     event Harvest(address indexed sender, uint256 performanceFee, uint256 callFee);
-    event Pause();
-    event Unpause();
+    event WhitelistedProxy(address indexed proxy);
+    event DewhitelistedProxy(address indexed proxy);
+    event SetTreasury(address indexed treasury);
+    event SetPerformanceFee(uint256 performanceFee);
+    event SetCallFee(uint256 callFee);
+    event SetWithdrawFee(uint256 withdrawFee);
+    event SetWithdrawFeePeriod(uint256 withdrawFeePeriod);
+    event EmergencyWithdraw();
 
     constructor(
         IERC20 _wagmi,
@@ -611,9 +672,22 @@ contract WagmiAutoStake is Ownable, Pausable {
 
         IERC20(_wagmi).safeApprove(address(_wagmiEarn), type(uint256).max);
     }
+    
+    function whitelistProxy(address _proxy) external onlyOwner {
+        require(_proxy != address(0), 'zero address');
+        whitelistedProxies[_proxy] = true;
+        emit WhitelistedProxy(_proxy);
+    }
+    
+    function dewhitelistProxy(address _proxy) external onlyOwner {
+        require(_proxy != address(0), 'zero address');
+        whitelistedProxies[_proxy] = false;
+        emit DewhitelistedProxy(_proxy);
+    }
 
-    function deposit(address _user, uint256 _amount) external whenNotPaused {
+    function deposit(address _user, uint256 _amount) external whenNotPaused nonReentrant {
         require(_amount > 0, "Nothing to deposit");
+        require(_user == msg.sender || whitelistedProxies[msg.sender], 'msg.sender is not allowed proxy');
 
         uint256 pool = balanceOf();
         wagmi.safeTransferFrom(msg.sender, address(this), _amount);
@@ -642,8 +716,8 @@ contract WagmiAutoStake is Ownable, Pausable {
         withdraw(userInfo[msg.sender].shares);
     }
 
-    function harvest() external whenNotPaused {
-        IWagmiEarn(wagmiEarn).withdraw(stakingPid, 0, true);
+    function harvest() external whenNotPaused nonReentrant {
+        IWagmiEarn(wagmiEarn).claim(stakingPid);
 
         uint256 bal = available();
         uint256 currentPerformanceFee = bal * performanceFee / 10000;
@@ -662,21 +736,25 @@ contract WagmiAutoStake is Ownable, Pausable {
     function setTreasury(address _treasury) external onlyOwner {
         require(_treasury != address(0), "Cannot be zero address");
         treasury = _treasury;
+        emit SetTreasury(_treasury);
     }
 
     function setPerformanceFee(uint256 _performanceFee) external onlyOwner {
         require(_performanceFee <= MAX_PERFORMANCE_FEE, "performanceFee cannot be more than MAX_PERFORMANCE_FEE");
         performanceFee = _performanceFee;
+        emit SetPerformanceFee(_performanceFee);
     }
 
     function setCallFee(uint256 _callFee) external onlyOwner {
         require(_callFee <= MAX_CALL_FEE, "callFee cannot be more than MAX_CALL_FEE");
         callFee = _callFee;
+        emit SetCallFee(_callFee);
     }
 
     function setWithdrawFee(uint256 _withdrawFee) external onlyOwner {
         require(_withdrawFee <= MAX_WITHDRAW_FEE, "withdrawFee cannot be more than MAX_WITHDRAW_FEE");
         withdrawFee = _withdrawFee;
+        emit SetWithdrawFee(_withdrawFee);
     }
 
     function setWithdrawFeePeriod(uint256 _withdrawFeePeriod) external onlyOwner {
@@ -685,20 +763,23 @@ contract WagmiAutoStake is Ownable, Pausable {
             "withdrawFeePeriod cannot be more than MAX_WITHDRAW_FEE_PERIOD"
         );
         withdrawFeePeriod = _withdrawFeePeriod;
+        emit SetWithdrawFeePeriod(_withdrawFeePeriod);
     }
 
     function emergencyWithdraw() external onlyOwner {
         IWagmiEarn(wagmiEarn).emergencyWithdraw(stakingPid);
-    }
-
-    function pause() external onlyOwner whenNotPaused {
+        hadEmergencyWithdrawn = true;
         _pause();
-        emit Pause();
+        emit EmergencyWithdraw();
     }
 
-    function unpause() external onlyOwner whenPaused {
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        require(!hadEmergencyWithdrawn, 'cannot unpause after emergency withdraw');
         _unpause();
-        emit Unpause();
     }
 
     function calculateHarvestWagmiRewards() external view returns (uint256) {
@@ -720,7 +801,7 @@ contract WagmiAutoStake is Ownable, Pausable {
         return totalShares == 0 ? 1e18 : balanceOf() * 1e18 / totalShares;
     }
 
-    function withdraw(uint256 _shares) public {
+    function withdraw(uint256 _shares) public nonReentrant {
         UserInfo storage user = userInfo[msg.sender];
         require(_shares > 0, "Nothing to withdraw");
         require(_shares <= user.shares, "Withdraw amount exceeds balance");
@@ -736,7 +817,7 @@ contract WagmiAutoStake is Ownable, Pausable {
             uint256 balAfter = available();
             uint256 diff = balAfter - bal;
             if (diff < balWithdraw) {
-                currentAmount = bal + diff;
+                currentAmount = balAfter;
             }
         }
 
