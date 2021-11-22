@@ -77,9 +77,8 @@ abstract contract Ownable is Context {
      * Internal function without access restriction.
      */
     function _transferOwnership(address newOwner) internal virtual {
-        address oldOwner = _owner;
+        emit OwnershipTransferred(_owner, newOwner);
         _owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
     }
 }
 
@@ -486,7 +485,7 @@ contract WagmiBond is Ownable {
         vestingBlocks = _vestingBlocks;
         require(_wagmiPerPrincipal != 0, 'ratio cant be zero');
         wagmiPerPrincipal = _wagmiPerPrincipal;
-        require(_ratioPrecision != 0, 'precision cant be zero');
+        require(_ratioPrecision >= _wagmiPerPrincipal, 'precision cant be zero');
         ratioPrecision = _ratioPrecision;
     }
     
@@ -494,7 +493,7 @@ contract WagmiBond is Ownable {
         emit RatioChanged(wagmiPerPrincipal, _wagmiPerPrincipal, ratioPrecision, _ratioPrecision);
         require(_wagmiPerPrincipal != 0, 'ratio cant be zero');
         wagmiPerPrincipal = _wagmiPerPrincipal;
-        require(_ratioPrecision != 0, 'precision cant be zero');
+        require(_ratioPrecision >= _wagmiPerPrincipal, 'precision cant be zero');
         ratioPrecision = _ratioPrecision;
     }
     
@@ -507,8 +506,7 @@ contract WagmiBond is Ownable {
     
     function deposit(uint256 amount) external returns (uint256) {
         uint256 payout;
-        if(wagmiPerPrincipal != 0)
-            payout = amount * wagmiPerPrincipal / ratioPrecision;
+        payout = amount * wagmiPerPrincipal / ratioPrecision;
             
         require(payout > 0, "too small");
         require(wagmiAvailableToPay >= payout, "sell out");
@@ -552,7 +550,7 @@ contract WagmiBond is Ownable {
         }
         
         if(autoStake) {
-            IERC20(wagmi).safeApprove(staking, payout);
+            IERC20(wagmi).approve(staking, payout);
             IAutoStake(staking).deposit(msg.sender, payout);
         } else {
             IERC20(wagmi).safeTransfer(msg.sender, payout);

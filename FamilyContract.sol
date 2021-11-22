@@ -73,9 +73,8 @@ abstract contract Ownable is Context {
     }
 
     function _setOwner(address newOwner) private {
-        address oldOwner = _owner;
+        emit OwnershipTransferred(_owner, newOwner);
         _owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
     }
 }
 
@@ -597,13 +596,6 @@ abstract contract Pausable is Context {
     bool private _paused;
 
     /**
-     * @dev Initializes the contract in unpaused state.
-     */
-    constructor() {
-        _paused = false;
-    }
-
-    /**
      * @dev Returns true if the contract is paused, and false otherwise.
      */
     function paused() public view virtual returns (bool) {
@@ -661,7 +653,7 @@ abstract contract Pausable is Context {
 
 interface IFamilyToken is IERC20 {
     function mint(address account, uint256 amount) external;
-    function burn(address account, uint256 amount) external;
+    function burn(uint256 amount) external;
 }
 
 interface IWagmiRouter {
@@ -697,13 +689,15 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
     uint256 public maxStakePerBlock;
     uint256 internal lastBlock;
     uint256 internal lastBlockUsdcStaked;
+    uint256 internal lastBlockWagmiPermilleChanged;
 
-    address public constant dead = 0x000000000000000000000000000000000000dEaD;
+    address private constant dead = 0x000000000000000000000000000000000000dEaD;
 
     mapping(address => uint256) public familyClaimAmount;
     mapping(address => uint256) public familyClaimBlock;
     mapping(address => uint256) public usdcClaimAmount;
     mapping(address => uint256) public usdcClaimBlock;
+    uint256 public totalUsdcClaimAmount;
 
     event Stake(address indexed user, uint256 amount);
     event FamilyClaim(address indexed user, uint256 amount);
@@ -757,62 +751,66 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
         for(uint256 i=0; i<_swapPath.length; i++)
             swapPathReverse[i] = _swapPath[_swapPath.length - 1 - i];
 
-        emit SwapPathChanged(swapPath);
+        emit SwapPathChanged(_swapPath);
     }
 
     function setWagmiPermille(uint _wagmiPermille) external onlyOwner {
         require(_wagmiPermille <= 500, 'wagmiPermille too high!');
         wagmiPermille = _wagmiPermille;
+        lastBlockWagmiPermilleChanged = block.number;
 
-        emit WagmiPermilleChanged(wagmiPermille);
+        emit WagmiPermilleChanged(_wagmiPermille);
     }
 
     function setTreasuryPermille(uint _treasuryPermille) external onlyOwner {
         require(_treasuryPermille <= 50, 'treasuryPermille too high!');
         treasuryPermille = _treasuryPermille;
 
-        emit TreasuryPermilleChanged(treasuryPermille);
+        emit TreasuryPermilleChanged(_treasuryPermille);
     }
 
     function setFeePermille(uint _feePermille) external onlyOwner {
         require(_feePermille <= 20, 'feePermille too high!');
         feePermille = _feePermille;
 
-        emit FeePermilleChanged(feePermille);
+        emit FeePermilleChanged(_feePermille);
     }
 
     function setTreasuryAddress(address _treasury) external onlyOwner {
         require(_treasury != address(0), 'zero address');
         treasury = _treasury;
 
-        emit TreasuryAddressChanged(treasury);
+        emit TreasuryAddressChanged(_treasury);
     }
 
     function setStrategistAddress(address _strategist) external onlyOwner {
         strategist = _strategist;
 
-        emit StrategistAddressChanged(strategist);
+        emit StrategistAddressChanged(_strategist);
     }
 
     function setMaxStakeAmount(uint256 _maxStakeAmount) external onlyOwner {
+        require(maxStakePerBlock >= _maxStakeAmount, 'value not valid');
         maxStakeAmount = _maxStakeAmount;
 
-        emit MaxStakeAmountChanged(maxStakeAmount);
+        emit MaxStakeAmountChanged(_maxStakeAmount);
     }
 
     function setMaxRedeemAmount(uint256 _maxRedeemAmount) external onlyOwner {
         maxRedeemAmount = _maxRedeemAmount;
 
-        emit MaxRedeemAmountChanged(maxRedeemAmount);
+        emit MaxRedeemAmountChanged(_maxRedeemAmount);
     }
 
     function setMaxStakePerBlock(uint256 _maxStakePerBlock) external onlyOwner {
+        require(_maxStakePerBlock >= maxStakeAmount, 'value not valid');
         maxStakePerBlock = _maxStakePerBlock;
 
-        emit MaxStakePerBlockChanged(maxStakePerBlock);
+        emit MaxStakePerBlockChanged(_maxStakePerBlock);
     }
 
-    function stake(uint256 amount, uint256 amountOutMin) external nonReentrant whenNotPaused {
+    function stake(uint256 amount, uint256 wagmiAmountOutMin, uint256 familyAmountOutMin) external nonReentrant whenNotPaused {
+        require(block.number > lastBlockWagmiPermilleChanged, 'wagmiPermille just changed');
         require(amount > 0, 'amount cannot be zero');
         require(familyClaimAmount[msg.sender] == 0, 'you have to claim first');
         require(amount <= maxStakeAmount, 'amount too high');
@@ -835,12 +833,13 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
         usdc.approve(address(wagmiRouter), wagmiAmount);
         wagmiRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
             wagmiAmount,
-            amountOutMin,
+            wagmiAmountOutMin,
             swapPath,
             address(this),
             block.timestamp
         );
 
+        require(amount >= familyAmountOutMin, 'familyAmountOutMin not met');
         familyClaimAmount[msg.sender] = amount;
         familyClaimBlock[msg.sender] = block.number;
 
@@ -866,27 +865,31 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
         family.safeTransferFrom(msg.sender, dead, amount);
         usdcClaimAmount[msg.sender] = amount;
         usdcClaimBlock[msg.sender] = block.number;
+        totalUsdcClaimAmount += amount;
 
         emit Redeem(msg.sender, amount);
     }
 
-    function claimUsdc(uint256 amountOutMin) external nonReentrant whenNotPaused {
+    function claimUsdc(uint256 wagmiAmountOutMin, uint256 usdcAmountOutMin) external nonReentrant whenNotPaused {
         require(usdcClaimAmount[msg.sender] > 0, 'there is nothing to claim');
         require(usdcClaimBlock[msg.sender] < block.number, 'you cannnot claim yet');
+        require(block.number > lastBlockWagmiPermilleChanged, 'wagmiPermille just changed');
 
         uint256 amount = usdcClaimAmount[msg.sender];
         usdcClaimAmount[msg.sender] = 0;
+        totalUsdcClaimAmount -= amount;
 
         uint256 usdcTransferAmount = amount * (1000 - wagmiPermille - treasuryPermille) / 1000;
+        require(usdcTransferAmount >= usdcAmountOutMin, 'usdcAmountOutMin not met');
         uint256 usdcTreasuryAmount = amount * treasuryPermille / 1000;
         uint256 wagmiTransferAmount = wagmi.balanceOf(address(this)) * amount / family.totalSupply();
-        family.burn(dead, amount);
+        family.burn(amount);
         usdc.safeTransfer(treasury, usdcTreasuryAmount);
         usdc.safeTransfer(msg.sender, usdcTransferAmount);
         wagmi.approve(address(wagmiRouter), wagmiTransferAmount);
         wagmiRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
             wagmiTransferAmount,
-            amountOutMin,
+            wagmiAmountOutMin,
             swapPathReverse,
             msg.sender,
             block.timestamp
@@ -902,6 +905,7 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
         family.safeTransferFrom(msg.sender, dead, amount);
         usdcClaimAmount[msg.sender] = amount;
         usdcClaimBlock[msg.sender] = block.number;
+        totalUsdcClaimAmount += amount;
 
         emit Redeem(msg.sender, amount);
     }
@@ -912,10 +916,11 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
 
         uint256 amount = usdcClaimAmount[msg.sender];
         usdcClaimAmount[msg.sender] = 0;
+        totalUsdcClaimAmount -= amount;
 
         uint256 usdcTransferAmount = amount * (1000 - wagmiPermille - treasuryPermille) / 1000;
         uint256 usdcTreasuryAmount = amount * treasuryPermille / 1000;
-        family.burn(dead, amount);
+        family.burn(amount);
         usdc.safeTransfer(treasury, usdcTreasuryAmount);
         usdc.safeTransfer(msg.sender, usdcTransferAmount);
 
@@ -924,6 +929,7 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
 
     function withdrawUsdc(uint256 amount) external onlyOwner {
         require(strategist != address(0), 'strategist not set');
+        require(usdc.balanceOf(address(this)) - amount - totalUsdcClaimAmount >= 0, 'not enough USDC');
         usdc.safeTransfer(strategist, amount);
 
         emit UsdcWithdrawn(amount);

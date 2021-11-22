@@ -77,9 +77,8 @@ abstract contract Ownable is Context {
      * Internal function without access restriction.
      */
     function _transferOwnership(address newOwner) internal virtual {
-        address oldOwner = _owner;
+        emit OwnershipTransferred(_owner, newOwner);
         _owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
     }
 }
 
@@ -586,15 +585,14 @@ abstract contract Mintable is Context, Ownable {
      * Internal function without access restriction.
      */
     function _transferMintership(address newMinter) internal virtual {
-        address oldMinter = _minter;
+        emit MintershipTransferred(_minter, newMinter);
         _minter = newMinter;
-        emit MintershipTransferred(oldMinter, newMinter);
     }
 }
 
 contract WagmiToken is ERC20("WAGMI", "GMI"), Ownable, Mintable {
     constructor() {
-        _mint(msg.sender, 20000000 ether);
+        _mint(msg.sender, 20_000_000 ether);
     }
     
     function mint(address _to, uint256 _amount) external onlyMinter {

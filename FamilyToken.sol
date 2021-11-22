@@ -77,9 +77,8 @@ abstract contract Ownable is Context {
      * Internal function without access restriction.
      */
     function _transferOwnership(address newOwner) internal virtual {
-        address oldOwner = _owner;
+        emit OwnershipTransferred(_owner, newOwner);
         _owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
     }
 }
 
@@ -586,18 +585,19 @@ abstract contract Mintable is Context, Ownable {
      * Internal function without access restriction.
      */
     function _transferMintership(address newMinter) internal virtual {
-        address oldMinter = _minter;
+        emit MintershipTransferred(_minter, newMinter);
         _minter = newMinter;
-        emit MintershipTransferred(oldMinter, newMinter);
     }
 }
 
 contract FamilyToken is ERC20("Family", "FAM"), Ownable, Mintable {
+    address private constant dead = 0x000000000000000000000000000000000000dEaD;
+    
     function mint(address _to, uint256 _amount) external onlyMinter {
         _mint(_to, _amount);
     }
     
-    function burn(address _from, uint256 _amount) external onlyMinter {
-        _burn(_from, _amount);
+    function burn(uint256 _amount) external onlyMinter {
+        _burn(dead, _amount);
     }
 }

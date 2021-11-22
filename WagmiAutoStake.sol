@@ -73,9 +73,8 @@ abstract contract Ownable is Context {
     }
 
     function _setOwner(address newOwner) private {
-        address oldOwner = _owner;
+        emit OwnershipTransferred(_owner, newOwner);
         _owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
     }
 }
 
@@ -479,13 +478,6 @@ abstract contract Pausable is Context {
     bool private _paused;
 
     /**
-     * @dev Initializes the contract in unpaused state.
-     */
-    constructor() {
-        _paused = false;
-    }
-
-    /**
      * @dev Returns true if the contract is paused, and false otherwise.
      */
     function paused() public view virtual returns (bool) {
@@ -635,10 +627,10 @@ contract WagmiAutoStake is Ownable, Pausable, ReentrancyGuard {
     uint256 public lastHarvestedTime;
     address public treasury;
 
-    uint256 public constant MAX_PERFORMANCE_FEE = 500;
-    uint256 public constant MAX_CALL_FEE = 100;
-    uint256 public constant MAX_WITHDRAW_FEE = 100;
-    uint256 public constant MAX_WITHDRAW_FEE_PERIOD = 72 hours;
+    uint256 internal constant MAX_PERFORMANCE_FEE = 500;
+    uint256 internal constant MAX_CALL_FEE = 100;
+    uint256 internal constant MAX_WITHDRAW_FEE = 100;
+    uint256 internal constant MAX_WITHDRAW_FEE_PERIOD = 72 hours;
 
     uint256 public performanceFee = 200;
     uint256 public callFee = 25;
@@ -670,17 +662,19 @@ contract WagmiAutoStake is Ownable, Pausable, ReentrancyGuard {
         stakingPid = _stakingPid;
         treasury = _treasury;
 
-        IERC20(_wagmi).safeApprove(address(_wagmiEarn), type(uint256).max);
+        IERC20(_wagmi).approve(address(_wagmiEarn), type(uint256).max);
     }
     
     function whitelistProxy(address _proxy) external onlyOwner {
         require(_proxy != address(0), 'zero address');
+        require(!whitelistedProxies[_proxy], 'proxy already whitelisted');
         whitelistedProxies[_proxy] = true;
         emit WhitelistedProxy(_proxy);
     }
     
     function dewhitelistProxy(address _proxy) external onlyOwner {
         require(_proxy != address(0), 'zero address');
+        require(whitelistedProxies[_proxy], 'proxy not whitelisted');
         whitelistedProxies[_proxy] = false;
         emit DewhitelistedProxy(_proxy);
     }

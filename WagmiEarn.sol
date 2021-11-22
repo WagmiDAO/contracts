@@ -73,9 +73,8 @@ abstract contract Ownable is Context {
     }
 
     function _setOwner(address newOwner) private {
-        address oldOwner = _owner;
+        emit OwnershipTransferred(_owner, newOwner);
         _owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
     }
 }
 
@@ -538,7 +537,7 @@ contract WagmiEarn is Ownable, ReentrancyGuard {
 
     IWagmiToken public immutable wagmi;
     uint256 public wagmiPerBlock;
-    uint256 public constant MAX_EMISSION_RATE = 100 ether;
+    uint256 internal constant MAX_EMISSION_RATE = 100 ether;
 
     PoolInfo[] public poolInfo;
     mapping(uint256 => mapping(address => UserInfo)) public userInfo;
