@@ -680,9 +680,9 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
     address[] public swapPath;
     address[] public swapPathReverse;
 
-    uint public wagmiPermille = 50;
-    uint public treasuryPermille = 2;
-    uint public feePermille = 1;
+    uint public wagmiPermille = 250;
+    uint public treasuryPermille = 5;
+    uint public feePermille = 8;
 
     uint256 public maxStakeAmount;
     uint256 public maxRedeemAmount;
@@ -691,6 +691,7 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
     uint256 internal lastBlockUsdcStaked;
     uint256 internal lastBlockWagmiPermilleChanged;
 
+    uint256 internal constant decimalDifference = 10 ** 12;
     address private constant dead = 0x000000000000000000000000000000000000dEaD;
 
     mapping(address => uint256) public familyClaimAmount;
@@ -828,7 +829,10 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
             usdc.safeTransfer(treasury, feeAmount);
             amount = amount - feeAmount;
         }
-        family.mint(address(this), amount);
+
+        uint256 amountWithDecimals = amount * decimalDifference;
+
+        family.mint(address(this), amountWithDecimals);
         uint256 wagmiAmount = amount * wagmiPermille / 1000;
         usdc.approve(address(wagmiRouter), wagmiAmount);
         wagmiRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
@@ -839,8 +843,8 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
             block.timestamp
         );
 
-        require(amount >= familyAmountOutMin, 'familyAmountOutMin not met');
-        familyClaimAmount[msg.sender] = amount;
+        require(amountWithDecimals >= familyAmountOutMin, 'familyAmountOutMin not met');
+        familyClaimAmount[msg.sender] = amountWithDecimals;
         familyClaimBlock[msg.sender] = block.number;
 
         emit Stake(msg.sender, amount);
@@ -879,9 +883,11 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
         usdcClaimAmount[msg.sender] = 0;
         totalUsdcClaimAmount -= amount;
 
-        uint256 usdcTransferAmount = amount * (1000 - wagmiPermille - treasuryPermille) / 1000;
+        uint256 amountWithoutDecimals = amount / decimalDifference;
+
+        uint256 usdcTransferAmount = amountWithoutDecimals * (1000 - wagmiPermille - treasuryPermille) / 1000;
         require(usdcTransferAmount >= usdcAmountOutMin, 'usdcAmountOutMin not met');
-        uint256 usdcTreasuryAmount = amount * treasuryPermille / 1000;
+        uint256 usdcTreasuryAmount = amountWithoutDecimals * treasuryPermille / 1000;
         uint256 wagmiTransferAmount = wagmi.balanceOf(address(this)) * amount / family.totalSupply();
         family.burn(amount);
         usdc.safeTransfer(treasury, usdcTreasuryAmount);
@@ -918,8 +924,10 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
         usdcClaimAmount[msg.sender] = 0;
         totalUsdcClaimAmount -= amount;
 
-        uint256 usdcTransferAmount = amount * (1000 - wagmiPermille - treasuryPermille) / 1000;
-        uint256 usdcTreasuryAmount = amount * treasuryPermille / 1000;
+        uint256 amountWithoutDecimals = amount / decimalDifference;
+
+        uint256 usdcTransferAmount = amountWithoutDecimals * (1000 - wagmiPermille - treasuryPermille) / 1000;
+        uint256 usdcTreasuryAmount = amountWithoutDecimals * treasuryPermille / 1000;
         family.burn(amount);
         usdc.safeTransfer(treasury, usdcTreasuryAmount);
         usdc.safeTransfer(msg.sender, usdcTransferAmount);
