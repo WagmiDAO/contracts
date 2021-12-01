@@ -486,7 +486,7 @@ contract WagmiBond is Ownable {
         vestingBlocks = _vestingBlocks;
         require(_wagmiPerPrincipal != 0, 'ratio cant be zero');
         wagmiPerPrincipal = _wagmiPerPrincipal;
-        require(_ratioPrecision >= _wagmiPerPrincipal, 'precision cant be zero');
+        require(_ratioPrecision != 0, 'precision cant be zero');
         ratioPrecision = _ratioPrecision;
     }
     
@@ -494,7 +494,7 @@ contract WagmiBond is Ownable {
         emit RatioChanged(wagmiPerPrincipal, _wagmiPerPrincipal, ratioPrecision, _ratioPrecision);
         require(_wagmiPerPrincipal != 0, 'ratio cant be zero');
         wagmiPerPrincipal = _wagmiPerPrincipal;
-        require(_ratioPrecision >= _wagmiPerPrincipal, 'precision cant be zero');
+        require(_ratioPrecision != 0, 'precision cant be zero');
         ratioPrecision = _ratioPrecision;
     }
     
