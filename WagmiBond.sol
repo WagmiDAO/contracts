@@ -454,6 +454,7 @@ contract WagmiBond is Ownable {
     uint256 public vestingBlocks;
     uint256 public wagmiPerPrincipal;
     uint256 public ratioPrecision;
+    uint256 public totalPrincipalReceived;
     
     struct UserInfo {
         uint256 remainingPayout;
@@ -512,6 +513,7 @@ contract WagmiBond is Ownable {
         require(wagmiAvailableToPay >= payout, "sell out");
 
         IERC20(principal).safeTransferFrom(msg.sender, treasury, amount);
+        totalPrincipalReceived += amount;
         wagmiAvailableToPay -= payout;
         userInfo[msg.sender] = UserInfo({
             remainingPayout: userInfo[msg.sender].remainingPayout + payout,
