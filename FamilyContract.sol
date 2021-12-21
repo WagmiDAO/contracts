@@ -681,8 +681,8 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
     address[] public swapPathReverse;
 
     uint public wagmiPermille = 250;
-    uint public treasuryPermille = 5;
-    uint public feePermille = 8;
+    uint public treasuryPermille = 8;
+    uint public feePermille = 5;
 
     uint256 public maxStakeAmount;
     uint256 public maxRedeemAmount;
@@ -937,7 +937,7 @@ contract FamilyContract is Ownable, Withdrawable, ReentrancyGuard, Pausable {
 
     function withdrawUsdc(uint256 amount) external onlyOwner {
         require(strategist != address(0), 'strategist not set');
-        require(usdc.balanceOf(address(this)) - amount - totalUsdcClaimAmount >= 0, 'not enough USDC');
+        require(usdc.balanceOf(address(this)) - amount >= totalUsdcClaimAmount / decimalDifference, 'not enough USDC');
         usdc.safeTransfer(strategist, amount);
 
         emit UsdcWithdrawn(amount);
